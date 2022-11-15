@@ -5,7 +5,7 @@
  *  This file is copyright under the latest version of the EUPL.
  *  Please see LICENSE file for your rights under this license. */
 
-/* global utils:false */
+/* global utils:false, checkMessages:false */
 var token = $("#token").text();
 
 $(function () {
@@ -59,7 +59,7 @@ $(function () {
   });
 
   // display selected import file on button's adjacent textfield
-  $("#zip_file").change(function () {
+  $("#zip_file").on("change", function () {
     var fileName = $(this)[0].files.length === 1 ? $(this)[0].files[0].name : "";
     $("#zip_filename").val(fileName);
   });
@@ -194,7 +194,7 @@ $("#apiTokenModal").on("show.bs.modal", function () {
   $('iframe[name="apiToken_iframe"]').contents().find("table").css(qrCodeStyle);
 });
 
-$("#DHCPchk").click(function () {
+$("#DHCPchk").on("click", function () {
   $("input.DHCPgroup").prop("disabled", !this.checked);
   $("#dhcpnotice").prop("hidden", !this.checked).addClass("lookatme");
 });
@@ -213,9 +213,15 @@ function loadCacheInfo() {
     var cachelivefreed = parseInt(data.cacheinfo["cache-live-freed"], 10);
     $("#cache-live-freed").text(cachelivefreed);
     if (cachelivefreed > 0) {
-      $("#cache-live-freed").parent("tr").addClass("lookatme");
+      $("#cache-live-freed").parent("tr").children("th").children("span").addClass("lookatme");
+      $("#cache-live-freed").parent("tr").children("td").addClass("lookatme");
+      $("#cache-live-freed")
+        .parent("tr")
+        .children("td")
+        .attr("lookatme-text", cachelivefreed.toString());
     } else {
-      $("#cache-live-freed").parent("tr").removeClass("lookatme");
+      $("#cache-live-freed").parent("tr").children("th").children("span").removeClass("lookatme");
+      $("#cache-live-freed").parent("tr").children("td").removeClass("lookatme");
     }
 
     // Update cache info every 10 seconds
@@ -341,7 +347,7 @@ $(function () {
 
   // En-/disable conditional forwarding input fields based
   // on the checkbox state
-  $('input[name="rev_server"]').click(function () {
+  $('input[name="rev_server"]').on("click", function () {
     $('input[name="rev_server_cidr"]').prop("disabled", !this.checked);
     $('input[name="rev_server_target"]').prop("disabled", !this.checked);
     $('input[name="rev_server_domain"]').prop("disabled", !this.checked);
@@ -371,7 +377,7 @@ $(function () {
     }
   }
 
-  bargraphs.click(function () {
+  bargraphs.on("click", function () {
     localStorage.setItem("barchart_chkbox", bargraphs.prop("checked"));
   });
 });
@@ -391,7 +397,7 @@ $(function () {
     }
   }
 
-  colorfulQueryLog.click(function () {
+  colorfulQueryLog.on("click", function () {
     localStorage.setItem("colorfulQueryLog_chkbox", colorfulQueryLog.prop("checked"));
   });
 });
@@ -438,5 +444,28 @@ $('button[id="removedynamic"]').on("click", function () {
       utils.showAlert("error", "Error while deleting DHCP lease for " + ipname, jqXHR.responseText);
       console.log(exception); // eslint-disable-line no-console
     },
+  });
+});
+
+// Non-fatal dnsmasq warnings toggle
+$(function () {
+  var nonfatalwarnigns = $("#hideNonfatalDnsmasqWarnings");
+  var chkboxData = localStorage ? localStorage.getItem("hideNonfatalDnsmasqWarnings_chkbox") : null;
+
+  if (chkboxData !== null) {
+    // Restore checkbox state
+    nonfatalwarnigns.prop("checked", chkboxData === "true");
+  } else {
+    // Initialize checkbox
+    nonfatalwarnigns.prop("checked", false);
+    if (localStorage) {
+      localStorage.setItem("hideNonfatalDnsmasqWarnings_chkbox", false);
+    }
+  }
+
+  nonfatalwarnigns.on("click", function () {
+    localStorage.setItem("hideNonfatalDnsmasqWarnings_chkbox", nonfatalwarnigns.prop("checked"));
+    // Call check messages to make new setting effective
+    checkMessages();
   });
 });

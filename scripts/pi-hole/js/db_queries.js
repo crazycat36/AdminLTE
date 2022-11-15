@@ -20,6 +20,23 @@ var datepickerManuallySelected = false;
 
 var dateformat = "MMMM Do YYYY, HH:mm";
 
+var replyTypes = [
+  "N/A",
+  "NODATA",
+  "NXDOMAIN",
+  "CNAME",
+  "IP",
+  "DOMAIN",
+  "RRNAME",
+  "SERVFAIL",
+  "REFUSED",
+  "NOTIMP",
+  "upstream error",
+  "DNSSEC",
+  "NONE",
+  "BLOB",
+];
+
 // Do we want to filter queries?
 var GETDict = {};
 window.location.search
@@ -84,7 +101,8 @@ function handleAjaxError(xhr, textStatus) {
     alert(
       "An unknown error occurred while loading the data.\n" +
         xhr.responseText +
-        "\nCheck the server's log files (/var/log/lighttpd/error.log when you're using the default Pi-hole web server) for details. You may need to increase the memory available for Pi-hole in case you requested a lot of data."
+        "\nCheck the server's log files (/var/log/lighttpd/error-pihole.log) for details.\n\nYou may need to increase PHP memory limit." +
+        "\n\nYou can find more info in pi-hole's FAQ:\nhttps://docs.pi-hole.net/main/faq/#error-while-loading-data-from-the-long-term-database"
     );
   }
 
@@ -93,59 +111,67 @@ function handleAjaxError(xhr, textStatus) {
   tableApi.draw();
 }
 
-function getQueryTypes() {
-  var queryType = [];
-  if ($("#type_gravity").prop("checked")) {
-    queryType.push(1);
+function excludeStatusTypes() {
+  var statusType = [];
+  if ($("#type_gravity").prop("checked") === false) {
+    statusType.push(1);
   }
 
-  if ($("#type_forwarded").prop("checked")) {
-    queryType.push([2, 14]);
+  if ($("#type_forwarded").prop("checked") === false) {
+    statusType.push([2, 14]);
   }
 
-  if ($("#type_cached").prop("checked")) {
-    queryType.push(3);
+  if ($("#type_cached").prop("checked") === false) {
+    statusType.push(3);
   }
 
-  if ($("#type_regex").prop("checked")) {
-    queryType.push(4);
+  if ($("#type_regex").prop("checked") === false) {
+    statusType.push(4);
   }
 
-  if ($("#type_blacklist").prop("checked")) {
-    queryType.push(5);
+  if ($("#type_blacklist").prop("checked") === false) {
+    statusType.push(5);
   }
 
-  if ($("#type_external").prop("checked")) {
+  if ($("#type_external").prop("checked") === false) {
     // Multiple IDs correspond to this status
     // We request queries with all of them
-    queryType.push([6, 7, 8]);
+    statusType.push([6, 7, 8]);
   }
 
-  if ($("#type_gravity_CNAME").prop("checked")) {
-    queryType.push(9);
+  if ($("#type_gravity_CNAME").prop("checked") === false) {
+    statusType.push(9);
   }
 
-  if ($("#type_regex_CNAME").prop("checked")) {
-    queryType.push(10);
+  if ($("#type_regex_CNAME").prop("checked") === false) {
+    statusType.push(10);
   }
 
-  if ($("#type_blacklist_CNAME").prop("checked")) {
-    queryType.push(11);
+  if ($("#type_blacklist_CNAME").prop("checked") === false) {
+    statusType.push(11);
   }
 
-  if ($("#type_retried").prop("checked")) {
+  if ($("#type_retried").prop("checked") === false) {
     // Multiple IDs correspond to this status
     // We request queries with all of them
-    queryType.push([12, 13]);
+    statusType.push([12, 13]);
   }
 
   // 14 is defined above
 
-  if ($("#type_dbbusy").prop("checked")) {
-    queryType.push(15);
+  if ($("#type_dbbusy").prop("checked") === false) {
+    statusType.push(15);
   }
 
-  return queryType.join(",");
+  if ($("#type_special_domain").prop("checked") === false) {
+    statusType.push(16);
+  }
+
+  if ($("#type_cached_stale").prop("checked") === false) {
+    statusType.push(17);
+  }
+
+  return statusType.join(",");
 }
 
 var reloadCallback = function () {
@@ -154,7 +180,7 @@ var reloadCallback = function () {
   var data = tableApi.rows().data();
   for (var i = 0; i < data.length; i++) {
     statistics[0]++; // TOTAL query
-    if (data[i][4] === 1 || (data[i][4] > 4 && ![10, 12, 13, 14].includes(data[i][4]))) {
+    if (data[i][4] === 1 || (data[i][4] > 4 && ![10, 12, 13, 14, 17].includes(data[i][4]))) {
       statistics[2]++; // EXACT blocked
     } else if (data[i][4] === 3) {
       statistics[1]++; // CACHE query
@@ -181,10 +207,10 @@ function refreshTableData() {
   timeoutWarning.show();
   reloadBox.hide();
   var APIstring = "api_db.php?getAllQueries&from=" + from + "&until=" + until;
-  // Check if query type filtering is enabled
-  var queryType = getQueryTypes();
-  if (queryType !== "1,2,3,4,5,6,7,8,9,10,11,12,13,14,15") {
-    APIstring += "&types=" + queryType;
+  // If status types should be excluded ("unchecked") we add them to the query
+  var statusType = excludeStatusTypes();
+  if (statusType.length > 0) {
+    APIstring += "&status=" + statusType;
   }
 
   statistics = [0, 0, 0];
@@ -196,15 +222,42 @@ $(function () {
     ? "api_db.php?getAllQueries&from=" + from + "&until=" + until
     : "api_db.php?getAllQueries=empty";
 
-  // Check if query type filtering is enabled
-  var queryType = getQueryTypes();
-  if (queryType !== 63) {
-    // 63 (0b00111111) = all possible query types are selected
-    APIstring += "&types=" + queryType;
+  // If status types should be excluded ("unchecked") we add them to the query
+  var statusType = excludeStatusTypes();
+  if (statusType.length > 0) {
+    APIstring += "&status=" + statusType;
   }
 
   tableApi = $("#all-queries").DataTable({
     rowCallback: function (row, data) {
+      var replyid = parseInt(data[6], 10);
+      var dnssecStatus;
+      switch (data[8]) {
+        case 1:
+          dnssecStatus = '<br><span class="text-green">SECURE';
+          break;
+        case 2:
+          dnssecStatus = '<br><span class="text-orange">INSECURE';
+          break;
+        case 3:
+          dnssecStatus = '<br><span class="text-red">BOGUS';
+          break;
+        case 4:
+          dnssecStatus = '<br><span class="text-red">ABANDONED';
+          break;
+        case 5:
+          dnssecStatus = '<br><span class="text-orange">UNKNOWN';
+          break;
+        default:
+          // No DNSSEC
+          dnssecStatus = "";
+      }
+
+      if (dnssecStatus.length > 0) {
+        if (replyid === 7) dnssecStatus += " (refused upstream)";
+        dnssecStatus += "</span>";
+      }
+
       var fieldtext,
         buttontext = "",
         blocked = false;
@@ -217,14 +270,16 @@ $(function () {
           break;
         case 2:
           fieldtext =
-            "<span class='text-green'>OK</span> (forwarded to <br class='hidden-lg'>" +
-            (data.length > 5 && data[5] !== "N/A" ? data[5] : "") +
-            ")";
+            replyid === 0
+              ? "<span class='text-green'>OK</span> (sent to <br class='hidden-lg'>"
+              : "<span class='text-green'>OK</span> (answered by <br class='hidden-lg'>";
+          fieldtext += (data.length > 5 && data[5] !== "N/A" ? data[5] : "") + ")" + dnssecStatus;
           buttontext =
             '<button type="button" class="btn btn-default btn-sm text-red"><i class="fa fa-ban"></i> Blacklist</button>';
           break;
         case 3:
-          fieldtext = "<span class='text-green'>OK</span> <br class='hidden-lg'>(cache)";
+          fieldtext =
+            "<span class='text-green'>OK</span> <br class='hidden-lg'>(cache)" + dnssecStatus;
           buttontext =
             '<button type="button" class="btn btn-default btn-sm text-red"><i class="fa fa-ban"></i> Blacklist</button>';
           break;
@@ -255,7 +310,8 @@ $(function () {
           blocked = true;
           break;
         case 9:
-          fieldtext = "<span class='text-red'>Blocked (gravity, CNAME)</span>";
+          fieldtext =
+            "<span class='text-red'>Blocked <br class='hidden-lg'>(gravity, CNAME)</span>";
           buttontext =
             '<button type="button" class="btn btn-default btn-sm text-green"><i class="fas fa-check"></i> Whitelist</button>';
           blocked = true;
@@ -282,7 +338,8 @@ $(function () {
           break;
         case 14:
           fieldtext =
-            "<span class='text-green'>OK</span> <br class='hidden-lg'>(already forwarded)";
+            "<span class='text-green'>OK</span> <br class='hidden-lg'>(already forwarded)" +
+            dnssecStatus;
           buttontext =
             '<button type="button" class="btn btn-default btn-sm text-red"><i class="fa fa-ban"></i> Blacklist</button>';
           break;
@@ -291,19 +348,49 @@ $(function () {
             "<span class='text-orange'>Blocked <br class='hidden-lg'>(database is busy)</span>";
           blocked = true;
           break;
+        case 16:
+          fieldtext =
+            "<span class='text-orange'>Blocked <br class='hidden-lg'>(special domain)</span>";
+          blocked = true;
+          break;
+        case 17:
+          fieldtext =
+            "<span class='text-orange'>OK</span> <br class='hidden-lg'>(stale cache)" +
+            dnssecStatus;
+          buttontext =
+            '<button type="button" class="btn btn-default btn-sm text-red"><i class="fa fa-ban"></i> Blacklist</button>';
+          break;
         default:
-          fieldtext = "Unknown";
+          fieldtext = "Unknown (" + parseInt(data[4], 10) + ")";
       }
+
+      // Cannot block internal queries of this type
+      if ((data[1] === "DNSKEY" || data[1] === "DS") && data[3] === "pi.hole") buttontext = "";
 
       $(row).addClass(blocked === true ? "blocked-row" : "allowed-row");
       if (localStorage && localStorage.getItem("colorfulQueryLog_chkbox") === "true") {
         $(row).addClass(blocked === true ? "text-red" : "text-green");
       }
 
+      // Check for existence of sixth column and display only if not Pi-holed
+      var replytext =
+        replyid >= 0 && replyid < replyTypes.length ? replyTypes[replyid] : "? (" + replyid + ")";
+
+      replytext += '<input type="hidden" name="id" value="' + replyid + '">';
+
       $("td:eq(4)", row).html(fieldtext);
-      $("td:eq(5)", row).html(buttontext);
+      $("td:eq(5)", row).html(replytext);
+      $("td:eq(6)", row).html(buttontext);
+
+      // Show response time only when reply is not N/A
+      if (data.length > 7 && replyid !== 0) {
+        $("td:eq(5)", row).append(" (" + (1000 * data[7]).toFixed(1) + "ms)");
+      }
 
       // Substitute domain by "." if empty
+      // This was introduced by https://github.com/pi-hole/AdminLTE/pull/1244 but is considered obsolete since
+      // https://github.com/pi-hole/FTL/pull/1413. However, we keep the conversion here to keep user's
+      // statistic accurat when they import older data with empty domain fields
       var domain = data[2];
       if (domain.length === 0) {
         domain = ".";
@@ -333,7 +420,7 @@ $(function () {
     order: [[0, "desc"]],
     columns: [
       {
-        width: "15%",
+        width: "12%",
         render: function (data, type) {
           if (type === "display") {
             return moment
@@ -344,11 +431,12 @@ $(function () {
           return data;
         },
       },
-      { width: "10%" },
-      { width: "40%" },
-      { width: "20%", type: "ip-address" },
-      { width: "10%" },
-      { width: "5%" },
+      { width: "9%" },
+      { width: "36%" },
+      { width: "10%", type: "ip-address" },
+      { width: "15%" },
+      { width: "9%" },
+      { width: "9%" },
     ],
     lengthMenu: [
       [10, 25, 50, 100, -1],
@@ -387,12 +475,12 @@ $("#querytime").on("apply.daterangepicker", function (ev, picker) {
   refreshTableData();
 });
 
-$("input[id^=type]").change(function () {
+$("input[id^=type]").on("change", function () {
   if (datepickerManuallySelected) {
     reloadBox.show();
   }
 });
 
-$(".bt-reload").click(function () {
+$(".bt-reload").on("click", function () {
   refreshTableData();
 });
